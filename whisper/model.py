@@ -28,20 +28,20 @@ class ModelDimensions:
 
 class LayerNorm(nn.LayerNorm):
     def forward(self, x: Tensor) -> Tensor:
-        return super().forward(x.float()).type(x.dtype)
+        return super().forward(x)
 
 
 class Linear(nn.Linear):
     def forward(self, x: Tensor) -> Tensor:
         return F.linear(
-            x, self.weight.to(x.dtype), None if self.bias is None else self.bias.to(x.dtype)
+            x, self.weight, None if self.bias is None else self.bias
         )
 
 
 class Conv1d(nn.Conv1d):
     def _conv_forward(self, x: Tensor, weight: Tensor, bias: Optional[Tensor]) -> Tensor:
         return super()._conv_forward(
-            x, weight.to(x.dtype), None if bias is None else bias.to(x.dtype)
+            x, weight, None if bias is None else bias
         )
 
 
@@ -62,6 +62,7 @@ class MultiHeadAttention(nn.Module):
         self.key = Linear(n_state, n_state, bias=False)
         self.value = Linear(n_state, n_state)
         self.out = Linear(n_state, n_state)
+        self.scale = (n_state // self.n_head) ** -0.25
 
     def forward(
         self,
@@ -86,18 +87,20 @@ class MultiHeadAttention(nn.Module):
         return self.out(wv), qk
 
     def qkv_attention(self, q: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor] = None):
-        n_batch, n_ctx, n_state = q.shape
-        scale = (n_state // self.n_head) ** -0.25
-        q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3) * scale
-        k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1) * scale
+        n_ctx = q.size(1)
+        q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3) * self.scale
+        k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1) * self.scale
         v = v.view(*v.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
 
         qk = q @ k
         if mask is not None:
             qk = qk + mask[:n_ctx, :n_ctx]
-        qk = qk.float()
+        if qk.dtype != torch.float:
+            qk = qk.float()
 
-        w = F.softmax(qk, dim=-1).to(q.dtype)
+        w = F.softmax(qk, dim=-1)
+        if w.dtype != q.dtype:
+            w = w.to(q.dtype)
         return (w @ v).permute(0, 2, 1, 3).flatten(start_dim=2), qk.detach()
 
 
@@ -151,7 +154,7 @@ class AudioEncoder(nn.Module):
         x = x.permute(0, 2, 1)
 
         assert x.shape[1:] == self.positional_embedding.shape, "incorrect audio shape"
-        x = (x + self.positional_embedding).to(x.dtype)
+        x = (x + self.positional_embedding)
 
         for block in self.blocks:
             x = block(x)
@@ -184,13 +187,12 @@ class TextDecoder(nn.Module):
         """
         offset = next(iter(kv_cache.values())).shape[1] if kv_cache else 0
         x = self.token_embedding(x) + self.positional_embedding[offset : offset + x.shape[-1]]
-        x = x.to(xa.dtype)
 
         for block in self.blocks:
             x = block(x, xa, mask=self.mask, kv_cache=kv_cache)
 
         x = self.ln(x)
-        logits = (x @ torch.transpose(self.token_embedding.weight.to(x.dtype), 0, 1)).float()
+        logits = (x @ torch.transpose(self.token_embedding.weight, 0, 1))
 
         return logits
 
@@ -215,10 +217,15 @@ class Whisper(nn.Module):
         )
         self._traced_decoder = None
         self._retrace = False
+        self._traced_encoder = False
 
     def encoder(self, x: Tensor):
-        if type(self._encoder) is not torch.jit._trace.TopLevelTracedModule:
+        if not self._traced_encoder:
+            self._encoder.eval()
             self._encoder = torch.jit.trace(self._encoder, example_inputs=x)
+            self._encoder = torch.jit.freeze(self._encoder)
+            self._traced_encoder = True
+            torch.jit.save(self._encoder, "whisper.pt")
         return self._encoder(x)
 
     def decoder(self, x: Tensor, xa: Tensor, kv_cache: Optional[dict] = None):

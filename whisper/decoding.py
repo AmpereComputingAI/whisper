@@ -133,16 +133,21 @@ class PyTorchInference(Inference):
         self.initial_token_length = initial_token_length
         self.kv_cache = {}
         self.hooks = []
+        self.self_keys = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
+        self.self_values = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
+        self.cross_keys = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
+        self.cross_values = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
 
-    def logits(self, tokens: Tensor, audio_features: Tensor) -> Tensor:
-        if not self.kv_cache:
-            self.kv_cache, self.hooks = self.model.install_kv_cache_hooks()
+    def logits(self, tokens: Tensor, audio_features: Tensor, step: int) -> Tensor:
+        #if not self.kv_cache:
+        #    self.kv_cache, self.hooks = self.model.install_kv_cache_hooks()
 
         if tokens.shape[-1] > self.initial_token_length:
             # only need to use the last token except in the first forward pass
             tokens = tokens[:, -1:]
 
-        return self.model.decoder(tokens, audio_features, kv_cache=self.kv_cache)
+        logits, self.self_keys, self.self_values, self.cross_keys, self.cross_values = self.model.decoder(tokens, audio_features, step, self.self_keys, self.self_values, self.cross_keys, self.cross_values)
+        return logits
 
     def cleanup_caching(self):
         for hook in self.hooks:
@@ -150,6 +155,10 @@ class PyTorchInference(Inference):
 
         self.kv_cache = {}
         self.hooks = []
+        self.self_keys = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
+        self.self_values = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
+        self.cross_keys = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
+        self.cross_values = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
 
     def rearrange_kv_cache(self, source_indices):
         print("THIS HJAPPENS")
@@ -593,7 +602,7 @@ class DecodingTask:
 
         try:
             for i in range(self.sample_len):
-                logits = self.inference.logits(tokens, audio_features)
+                logits = self.inference.logits(tokens, audio_features, i)
 
                 if i == 0 and self.tokenizer.no_speech is not None:  # save no_speech_probs
                     probs_at_sot = logits[:, self.sot_index].float().softmax(dim=-1)

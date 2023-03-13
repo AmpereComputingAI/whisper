@@ -86,10 +86,11 @@ class MultiHeadAttention(nn.Module):
         #    v = kv_cache[id(self.value)]
         if keys is not None:
             if self.is_cross:
-                k = self.key(x if xa is None else xa)
-                v = self.value(x if xa is None else xa)
-                keys = k
-                values = v
+                if keys.numel() == 0:
+                    keys = self.key(x if xa is None else xa)
+                    values = self.value(x if xa is None else xa)
+                k = keys
+                v = values
             else:
                 k = self.key(x if xa is None else xa)
                 v = self.value(x if xa is None else xa)
@@ -126,7 +127,7 @@ class ResidualAttentionBlock(nn.Module):
     def __init__(self, n_state: int, n_head: int, cross_attention: bool = False):
         super().__init__()
 
-        self.attn = MultiHeadAttention(n_state, n_head, cross_attention)
+        self.attn = MultiHeadAttention(n_state, n_head, False)
         self.attn_ln = LayerNorm(n_state)
 
         self.cross_attn = MultiHeadAttention(n_state, n_head, cross_attention) if cross_attention else None
@@ -143,13 +144,13 @@ class ResidualAttentionBlock(nn.Module):
         mask: Optional[Tensor] = None,
         self_keys:Tensor = None, self_values: Tensor = None, cross_keys: Tensor = None, cross_values: Tensor = None
     ):
-        x, _, self_keys, self_values = self.attn(self.attn_ln(x), mask=mask, keys=self_keys, values=self_values)
+        xn, _, self_keys, self_values = self.attn(self.attn_ln(x), mask=mask, keys=self_keys, values=self_values)
+        x = x + xn
         if self.cross_attn:
-            x, _, cross_keys, cross_values = self.cross_attn(self.cross_attn_ln(x), xa, keys=cross_keys, values=cross_values)
+            xn, _, cross_keys, cross_values = self.cross_attn(self.cross_attn_ln(x), xa, keys=cross_keys, values=cross_values)
+            x = x + xn
         x = x + self.mlp(self.mlp_ln(x))
         return x, self_keys, self_values, cross_keys, cross_values
-
-
 class AudioEncoder(nn.Module):
     def __init__(self, n_mels: int, n_ctx: int, n_state: int, n_head: int, n_layer: int):
         super().__init__()
@@ -205,9 +206,10 @@ class TextDecoder(nn.Module):
             the encoded audio features to be attended on
         """
         #offset = next(iter(kv_cache.values())).shape[1] if kv_cache else 0
-        if self_keys:
-            print(self_keys[0].shape)
-        offset = self_keys[0].shape[0] if self_keys else 0
+        #torch.set_printoptions(threshold=100, edgeitems=2)
+        #if self_keys:
+        #    print(len(self_keys[0]), self_keys[0].shape)
+        offset = self_keys[0].shape[1] if len(self_keys[0]) > 0 else 0
         x = self.token_embedding(x) + self.positional_embedding[offset : offset + x.shape[-1]]
 
         next_self_keys = []
@@ -266,20 +268,25 @@ class Whisper(nn.Module):
         return self._encoder(x)
 
     def decoder(self, x: Tensor, xa: Tensor, step: int, self_keys: List[Tensor]=None, self_values:List[Tensor]=None, cross_keys:List[Tensor]=None, cross_values:List[Tensor]=None):
-        print("step", step)
+        #print("step", step)
         if step == 0:
+            #print("self_keys", self_keys)
+            #print("self_values", self_values)
+            #print("cross_keys", cross_keys)
+            #print("cross_values", cross_values)
             if not self._is_first_decoder_traced:
                 self._traced_decoder_first = torch.jit.trace(self._decoder, (x, xa, self_keys, self_values, cross_keys, cross_values))
                 self._traced_decoder_first = torch.jit.freeze(self._traced_decoder_first)
                 self._is_first_decoder_traced = True
                 torch.jit.save(self._traced_decoder_first, "whisper_decoder_1st.pt")
-            return self._traced_decoder_first
+            return self._decoder(x, xa, self_keys, self_values, cross_keys, cross_values)
+            return self._traced_decoder_first(x, xa, self_keys, self_values, cross_keys, cross_values)
         if not self._is_decoder_traced:
             self._traced_decoder = torch.jit.trace(self._decoder, (x, xa, self_keys, self_values, cross_keys, cross_values))
             self._traced_decoder = torch.jit.freeze(self._traced_decoder)
             self._is_decoder_traced = True
             torch.jit.save(self._traced_decoder, "whisper_decoder.pt")
-        return self._traced_decoder
+        return self._traced_decoder(x, xa, self_keys, self_values, cross_keys, cross_values)
         return self._decoder(x, xa, self_keys, self_values, cross_keys, cross_values)
 
     def embed_audio(self, mel: torch.Tensor):

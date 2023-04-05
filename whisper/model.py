@@ -213,22 +213,20 @@ class Whisper(nn.Module):
             self.dims.n_text_head,
             self.dims.n_text_layer,
         )
-        self._traced_decoder = None
-        self._retrace = False
+        self.encoder_compiled = False
+        self.decoder_compiled = False
 
     def encoder(self, x: Tensor):
-        if type(self._encoder) is not torch.jit._trace.TopLevelTracedModule:
-            self._encoder = torch.jit.trace(self._encoder, example_inputs=x)
+        if not self.encoder_compiled:
+            self._encoder = torch.compile(self._encoder, backend='aio')
+            self.encoder_compiled = True
         return self._encoder(x)
 
     def decoder(self, x: Tensor, xa: Tensor, kv_cache: Optional[dict] = None):
+        if not self.decoder_compiled:
+            self._decoder = torch.compile(self._decoder, backend='aio')
+            self.decoder_compiled = True
         return self._decoder(x, xa, kv_cache)
-        if bool(kv_cache) and self._retrace:
-            self._traced_decoder = torch.jit.trace(self._decoder, example_inputs=(x, xa, kv_cache), check_trace=False)
-            self._retrace = False
-        elif self._retrace:
-            return self._decoder(x, xa, kv_cache)
-        return self._traced_decoder(x, xa, kv_cache)
 
     def embed_audio(self, mel: torch.Tensor):
         return self.encoder(mel)

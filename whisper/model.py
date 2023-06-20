@@ -107,8 +107,10 @@ class MultiHeadAttention(nn.Module):
 
     def qkv_attention(self, q: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor] = None):
         n_ctx = q.size(1)
-        q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3) * self.scale
-        k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1) * self.scale
+        q = q * self.scale
+        k = k * self.scale
+        q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
+        k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
         v = v.view(*v.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
 
         qk = q @ k

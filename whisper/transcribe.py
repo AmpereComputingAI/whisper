@@ -218,6 +218,10 @@ def transcribe(
             "no_speech_prob": result.no_speech_prob,
         }
 
+    import time
+    latencies = []
+    n = 0
+    start = time.time()
     # show the progress bar when verbose is False (if True, transcribed text will be printed)
     with tqdm.tqdm(
         total=content_frames, unit="frames", disable=verbose is not False
@@ -364,6 +368,14 @@ def transcribe(
             # update progress bar
             pbar.update(min(content_frames, seek) - previous_seek)
 
+            latencies.append(time.time() - start)
+            n += 1
+            if n >= 12:
+                break
+            start = time.time()
+
+    warm_up_n = 2
+    print(segment_duration / (sum(latencies[warm_up_n:])/(len(latencies)-warm_up_n)))
     return dict(
         text=tokenizer.decode(all_tokens[len(initial_prompt_tokens) :]),
         segments=all_segments,

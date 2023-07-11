@@ -156,6 +156,7 @@ class PyTorchInference(Inference):
         self.self_values = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
         self.cross_keys = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
         self.cross_values = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
+        self._profile_decoder = os.environ.get("PROFILE_DECODER") == "1"
 
     def logits(self, tokens: Tensor, audio_features: Tensor, step: int) -> Tensor:
         # if not self.kv_cache:
@@ -165,7 +166,7 @@ class PyTorchInference(Inference):
             # only need to use the last token except in the first forward pass
             tokens = tokens[:, -1:]
 
-        if "AIO_PROFILER" in os.environ and os.environ["AIO_PROFILER"] == "1":
+        if self._profile_decoder:
             with profile() as self.profile:
                 logits, self.self_keys, self.self_values, self.cross_keys, self.cross_values = self.model.decoder(
                     tokens, audio_features, step, self.self_keys, self.self_values, self.cross_keys, self.cross_values)
@@ -184,7 +185,7 @@ class PyTorchInference(Inference):
         self.self_values = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
         self.cross_keys = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
         self.cross_values = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
-        if "AIO_PROFILER" in os.environ and os.environ["AIO_PROFILER"] == "1":
+        if self._profile_decoder:
             print(self.profile.key_averages().table(sort_by='cpu_time_total', row_limit=50))
             torch._C._aio_profiler_print()
 

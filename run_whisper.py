@@ -9,8 +9,12 @@ from whisper.transcribe import transcribe
 model = whisper.load_model("medium.en")
 model.eval()
 
-a = time.time()
+#a = time.time()
 with torch.no_grad():
+    for _ in range(2):
+        _ = transcribe(model, sys.argv[1], verbose=False)
+    start = time.time()
     result = transcribe(model, sys.argv[1], verbose=False)
+    finish = time.time()
     print(result["text"])
-print(time.time() - a)
+print(f"\nLatency: {round(finish-start, 2)} sec")

@@ -95,6 +95,9 @@ class MultiHeadAttention(nn.Module):
                 if keys.numel() == 0:
                     keys = self.key(x if xa is None else xa)
                     values = self.value(x if xa is None else xa)
+                    keys = keys * self.scale
+                    keys = keys.view(*keys.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
+                    values = values.view(*values.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
                 k = keys
                 v = values
             else:
@@ -115,11 +118,15 @@ class MultiHeadAttention(nn.Module):
             self, q: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor] = None
     ):
         n_ctx = q.size(1)
-        q = q * self.scale
-        k = k * self.scale
-        q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
-        k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
-        v = v.view(*v.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
+        if self.is_cross:
+            q = q * self.scale
+            q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
+        else:
+            q = q * self.scale
+            k = k * self.scale
+            q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
+            k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
+            v = v.view(*v.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
 
         qk = q @ k
         if mask is not None:

@@ -93,14 +93,10 @@ class MultiHeadAttention(nn.Module):
         if keys is not None:
             if self.is_cross:
                 if keys.numel() == 0:
-                    print("yo")
-                    keys = self.key(x if xa is None else xa)
+                    keys = self.key(x if xa is None else xa) * self.scale
                     values = self.value(x if xa is None else xa)
-                    keys = keys * self.scale
-                    keys = keys.view(*keys.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
-                    values = values.view(*values.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
-                k = keys
-                v = values
+                k = keys.view(*keys.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
+                v = values.view(*values.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
             else:
                 k = self.key(x if xa is None else xa) * self.scale
                 v = self.value(x if xa is None else xa)
@@ -108,9 +104,13 @@ class MultiHeadAttention(nn.Module):
                 v = torch.cat((values, v), dim=1)
                 keys = k
                 values = v
+                k = k.view(*keys.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
+                v = v.view(*values.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
         else:
-            k = self.key(x if xa is None else xa)
+            k = self.key(x if xa is None else xa) * self.scale
             v = self.value(x if xa is None else xa)
+            k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
+            v = v.view(*v.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
 
         wv, qk = self.qkv_attention(q, k, v, mask)
         return self.out(wv), qk, keys, values
@@ -121,9 +121,6 @@ class MultiHeadAttention(nn.Module):
         n_ctx = q.size(1)
         q = q * self.scale
         q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
-        if not self.is_cross:
-            k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
-            v = v.view(*v.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
 
         qk = q @ k
         if mask is not None:

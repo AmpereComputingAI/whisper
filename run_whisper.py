@@ -5,11 +5,11 @@ import whisper
 import warnings
 from whisper.transcribe import transcribe
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 #torch.jit.set_fusion_strategy([("DYNAMIC", 1)])
 #model = whisper.load_model("large")
-model = whisper.load_model("medium.en")
+model = whisper.load_model("tiny.en")
 model.eval()
 
 #a = time.time()

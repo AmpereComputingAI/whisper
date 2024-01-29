@@ -118,13 +118,10 @@ class MultiHeadAttention(nn.Module):
             self, q: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor] = None
     ):
         n_ctx = q.size(1)
-        if self.is_cross:
-            q = q * self.scale
-            q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
-        else:
-            q = q * self.scale
+        q = q * self.scale
+        q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
+        if not self.is_cross:
             k = k * self.scale
-            q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
             k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
             v = v.view(*v.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
 

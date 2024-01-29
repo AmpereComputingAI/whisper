@@ -2,7 +2,10 @@ import sys
 import time
 import torch
 import whisper
+import warnings
 from whisper.transcribe import transcribe
+
+warnings.filterwarnings('ignore')
 
 #torch.jit.set_fusion_strategy([("DYNAMIC", 1)])
 #model = whisper.load_model("large")

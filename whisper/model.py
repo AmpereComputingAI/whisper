@@ -100,12 +100,10 @@ class MultiHeadAttention(nn.Module):
             else:
                 k = self.key(x if xa is None else xa) * self.scale
                 v = self.value(x if xa is None else xa)
-                k = torch.cat((keys, k), dim=1)
-                v = torch.cat((values, v), dim=1)
-                keys = k
-                values = v
-                k = k.view(*keys.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
-                v = v.view(*values.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
+                keys = torch.cat((keys, k), dim=1)
+                values = torch.cat((values, v), dim=1)
+                k = keys.view(*keys.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
+                v = values.view(*values.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
         else:
             k = self.key(x if xa is None else xa) * self.scale
             v = self.value(x if xa is None else xa)

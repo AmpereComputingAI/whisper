@@ -289,7 +289,8 @@ class Whisper(nn.Module):
         self._traced_decoder = None
         self._is_encoder_traced = False
         self._is_decoder_traced = False
-        self._is_decoder_first_traced = False
+        self._is_decoder_first_pass_traced = False
+        self._is_decoder_first_pass_multitoken_traced = False
         # use the last half layers for alignment by default; see `set_alignment_heads()` below
         all_heads = torch.zeros(
             self.dims.n_text_layer, self.dims.n_text_head, dtype=torch.bool
@@ -308,13 +309,19 @@ class Whisper(nn.Module):
 
     def decoder(self, x: Tensor, xa: Tensor, step: int, self_keys: List[Tensor] = None,
                 self_values: List[Tensor] = None, cross_keys: List[Tensor] = None, cross_values: List[Tensor] = None):
-        if step == 0:
-            if not self._is_decoder_first_traced:
-                self._traced_decoder_first = torch.jit.trace(self._decoder, (x, xa, self_keys, self_values, cross_keys, cross_values))
-                self._traced_decoder_first = torch.jit.freeze(self._traced_decoder_first)
-                self._is_decoder_first_traced = True
-                torch.jit.save(self._traced_decoder_first, "whisper_decoder_1st.pt")
-            return self._traced_decoder_first(x, xa, self_keys, self_values, cross_keys, cross_values)
+        if step == 0 and x.size(1) == 1:
+            if not self._is_decoder_first_pass_traced:
+                self._traced_decoder_first_pass = torch.jit.trace(self._decoder, (x, xa, self_keys, self_values, cross_keys, cross_values))
+                self._traced_decoder_first_pass = torch.jit.freeze(self._traced_decoder_first_pass)
+                self._is_decoder_first_pass_traced = True
+                # torch.jit.save(self._traced_decoder_first_pass, "whisper_decoder_1st.pt")
+            return self._traced_decoder_first_pass(x, xa, self_keys, self_values, cross_keys, cross_values)
+        if step == 0 and x.size(1) > 1:
+            if not self._is_decoder_first_pass_multitoken_traced:
+                self._traced_decoder_first_pass_multitoken = torch.jit.trace(self._decoder, (x, xa, self_keys, self_values, cross_keys, cross_values))
+                self._traced_decoder_first_pass_multitoken = torch.jit.freeze(self._traced_decoder_first_pass_multitoken)
+                self._is_decoder_first_pass_multitoken_traced = True
+            return self._traced_decoder_first_pass_multitoken(x, xa, self_keys, self_values, cross_keys, cross_values)
         if not self._is_decoder_traced:
             self._traced_decoder = torch.jit.trace(self._decoder,
                                                    (x, xa, self_keys, self_values, cross_keys, cross_values))

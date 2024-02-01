@@ -330,6 +330,9 @@ class Whisper(nn.Module):
                 self._traced_decoder_first_pass_multitoken = torch.jit.trace(self._decoder, (torch.cat((x, x), 1), xa, self_keys, self_values, cross_keys, cross_values))
                 self._traced_decoder_first_pass_multitoken = torch.jit.freeze(self._traced_decoder_first_pass_multitoken)
                 self._is_decoder_first_pass_multitoken_traced = True
+                # karol: We have to profile it now too, for reliable AML results
+                res = self._traced_decoder_first_pass_multitoken(torch.cat((x, x), 1), xa, self_keys, self_values, cross_keys, cross_values)
+                res = self._traced_decoder_first_pass_multitoken(torch.cat((x, x), 1), xa, self_keys, self_values, cross_keys, cross_values)
             return self._traced_decoder_first_pass(x, xa, self_keys, self_values, cross_keys, cross_values)
         if step == 0 and x.size(1) > 1:
             if not self._is_decoder_first_pass_multitoken_traced:

@@ -107,19 +107,20 @@ class MultiHeadAttention(nn.Module):
                     v = v.view(*v.shape[:1], self.n_head, 1, -1)
                 else:
                     v = v.view(*v.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
-                k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
-                k = torch.cat((keys, k), dim=2)
+                k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
+                
+                k = torch.cat((keys, k), dim=3)
                 v = torch.cat((values, v), dim=2)
                 keys = k
                 values = v
         else:
             k = self.key(x if xa is None else xa) * self.scale
-            k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
             v = self.value(x if xa is None else xa)
             if q.size(1)== 1:
                 v = v.view(*v.shape[:1], self.n_head, 1, -1)
             else:
                 v = v.view(*v.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
+            k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
 
         wv, qk = self.qkv_attention(q, k, v, mask)
         return self.out(wv), qk, keys, values
@@ -133,8 +134,8 @@ class MultiHeadAttention(nn.Module):
             q = q.view(*q.shape[:1], self.n_head, 1, -1)
         else:
             q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
-        if not self.is_cross:
-            k = k.transpose(2, 3)
+        #if not self.is_cross:
+        #    k = k.transpose(2, 3)
             # k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
 
         qk = q @ k

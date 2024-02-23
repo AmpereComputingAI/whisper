@@ -95,18 +95,29 @@ class MultiHeadAttention(nn.Module):
                 if keys.numel() == 0:
                     keys = self.key(x if xa is None else xa)
                     values = self.value(x if xa is None else xa)
+                    keys = keys * self.scale
+                    keys = keys.view(*keys.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
+                    values = values.view(*values.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
                 k = keys
                 v = values
             else:
-                k = self.key(x if xa is None else xa)
+                k = self.key(x if xa is None else xa) * self.scale
                 v = self.value(x if xa is None else xa)
+                if q.size(1) == 1:
+                    v = v.view(*v.shape[:1], self.n_head, 1, -1)
+                else:
+                    v = v.view(*v.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
                 k = torch.cat((keys, k), dim=1)
-                v = torch.cat((values, v), dim=1)
+                v = torch.cat((values, v), dim=2)
                 keys = k
                 values = v
         else:
-            k = self.key(x if xa is None else xa)
+            k = self.key(x if xa is None else xa) * self.scale
             v = self.value(x if xa is None else xa)
+            if q.size(1)== 1:
+                v = v.view(*v.shape[:1], self.n_head, 1, -1)
+            else:
+                v = v.view(*v.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
 
         wv, qk = self.qkv_attention(q, k, v, mask)
         return self.out(wv), qk, keys, values
@@ -116,10 +127,12 @@ class MultiHeadAttention(nn.Module):
     ):
         n_ctx = q.size(1)
         q = q * self.scale
-        k = k * self.scale
-        q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
-        k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
-        v = v.view(*v.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
+        if n_ctx == 1:
+            q = q.view(*q.shape[:1], self.n_head, 1, -1)
+        else:
+            q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
+        if not self.is_cross:
+            k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 3, 1)
 
         qk = q @ k
         if mask is not None:
@@ -130,7 +143,11 @@ class MultiHeadAttention(nn.Module):
         w = F.softmax(qk, dim=-1)
         if w.dtype != q.dtype:
             w = w.to(q.dtype)
-        return (w @ v).permute(0, 2, 1, 3).flatten(start_dim=2), qk.detach()
+        attn = w @ v
+        if n_ctx == 1:
+            return attn.view(attn.size(0), 1, -1), qk.detach()
+        else:
+            return attn.permute(0, 2, 1, 3).flatten(start_dim=2), qk.detach()
 
 
 class ResidualAttentionBlock(nn.Module):
@@ -285,7 +302,8 @@ class Whisper(nn.Module):
         self._traced_decoder = None
         self._is_encoder_traced = False
         self._is_decoder_traced = False
-        self._is_decoder_first_traced = False
+        self._is_decoder_first_pass_traced = False
+        self._is_decoder_first_pass_multitoken_traced = False
         # use the last half layers for alignment by default; see `set_alignment_heads()` below
         all_heads = torch.zeros(
             self.dims.n_text_layer, self.dims.n_text_head, dtype=torch.bool
@@ -304,13 +322,24 @@ class Whisper(nn.Module):
 
     def decoder(self, x: Tensor, xa: Tensor, step: int, self_keys: List[Tensor] = None,
                 self_values: List[Tensor] = None, cross_keys: List[Tensor] = None, cross_values: List[Tensor] = None):
-        if step == 0:
-            if not self._is_decoder_first_traced:
-                self._traced_decoder_first = torch.jit.trace(self._decoder, (x, xa, self_keys, self_values, cross_keys, cross_values))
-                self._traced_decoder_first = torch.jit.freeze(self._traced_decoder_first)
-                self._is_decoder_first_traced = True
-                torch.jit.save(self._traced_decoder_first, "whisper_decoder_1st.pt")
-            return self._traced_decoder_first(x, xa, self_keys, self_values, cross_keys, cross_values)
+        if step == 0 and x.size(1) == 1:
+            if not self._is_decoder_first_pass_traced:
+                self._traced_decoder_first_pass = torch.jit.trace(self._decoder, (x, xa, self_keys, self_values, cross_keys, cross_values))
+                self._traced_decoder_first_pass = torch.jit.freeze(self._traced_decoder_first_pass)
+                self._is_decoder_first_pass_traced = True
+                self._traced_decoder_first_pass_multitoken = torch.jit.trace(self._decoder, (torch.cat((x, x), 1), xa, self_keys, self_values, cross_keys, cross_values))
+                self._traced_decoder_first_pass_multitoken = torch.jit.freeze(self._traced_decoder_first_pass_multitoken)
+                self._is_decoder_first_pass_multitoken_traced = True
+                # karol: We have to profile it now too, for reliable AML results
+                res = self._traced_decoder_first_pass_multitoken(torch.cat((x, x), 1), xa, self_keys, self_values, cross_keys, cross_values)
+                res = self._traced_decoder_first_pass_multitoken(torch.cat((x, x), 1), xa, self_keys, self_values, cross_keys, cross_values)
+            return self._traced_decoder_first_pass(x, xa, self_keys, self_values, cross_keys, cross_values)
+        if step == 0 and x.size(1) > 1:
+            if not self._is_decoder_first_pass_multitoken_traced:
+                self._traced_decoder_first_pass_multitoken = torch.jit.trace(self._decoder, (x, xa, self_keys, self_values, cross_keys, cross_values))
+                self._traced_decoder_first_pass_multitoken = torch.jit.freeze(self._traced_decoder_first_pass_multitoken)
+                self._is_decoder_first_pass_multitoken_traced = True
+            return self._traced_decoder_first_pass_multitoken(x, xa, self_keys, self_values, cross_keys, cross_values)
         if not self._is_decoder_traced:
             self._traced_decoder = torch.jit.trace(self._decoder,
                                                    (x, xa, self_keys, self_values, cross_keys, cross_values))

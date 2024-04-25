@@ -51,10 +51,10 @@ def detect_language(
     if mel.shape[-2:] != (model.dims.n_audio_ctx, model.dims.n_audio_state):
         mel = model.encoder(mel)
 
-    self_keys = [torch.tensor([]) for _ in range(model._decoder.n_layer)]
-    self_values = [torch.tensor([]) for _ in range(model._decoder.n_layer)]
-    cross_keys = [torch.tensor([]) for _ in range(model._decoder.n_layer)]
-    cross_values = [torch.tensor([]) for _ in range(model._decoder.n_layer)]
+    self_keys = [torch.tensor([], dtype=mel.dtype) for _ in range(model._decoder.n_layer)]
+    self_values = [torch.tensor([], dtype=mel.dtype) for _ in range(model._decoder.n_layer)]
+    cross_keys = [torch.tensor([], dtype=mel.dtype) for _ in range(model._decoder.n_layer)]
+    cross_values = [torch.tensor([], dtype=mel.dtype) for _ in range(model._decoder.n_layer)]
 
     # forward pass using a single token, startoftranscript
     n_audio = mel.shape[0]
@@ -147,15 +147,16 @@ class Inference:
 
 
 class PyTorchInference(Inference):
-    def __init__(self, model: "Whisper", initial_token_length: int):
+    def __init__(self, model: "Whisper", initial_token_length: int, fp16: bool):
         self.model: "Whisper" = model
         self.initial_token_length = initial_token_length
+        self.dtype = torch.float16 if fp16 else torch.float32
         self.kv_cache = {}
         self.hooks = []
-        self.self_keys = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
-        self.self_values = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
-        self.cross_keys = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
-        self.cross_values = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
+        self.self_keys = [torch.tensor([], dtype=self.dtype) for _ in range(self.model._decoder.n_layer)]
+        self.self_values = [torch.tensor([], dtype=self.dtype) for _ in range(self.model._decoder.n_layer)]
+        self.cross_keys = [torch.tensor([], dtype=self.dtype) for _ in range(self.model._decoder.n_layer)]
+        self.cross_values = [torch.tensor([], dtype=self.dtype) for _ in range(self.model._decoder.n_layer)]
         self._profile_decoder = os.environ.get("PROFILE_DECODER") == "1"
 
     def logits(self, tokens: Tensor, audio_features: Tensor, step: int) -> Tensor:
@@ -181,10 +182,10 @@ class PyTorchInference(Inference):
 
         self.kv_cache = {}
         self.hooks = []
-        self.self_keys = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
-        self.self_values = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
-        self.cross_keys = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
-        self.cross_values = [torch.tensor([]) for _ in range(self.model._decoder.n_layer)]
+        self.self_keys = [torch.tensor([], dtype=self.dtype) for _ in range(self.model._decoder.n_layer)]
+        self.self_values = [torch.tensor([], dtype=self.dtype) for _ in range(self.model._decoder.n_layer)]
+        self.cross_keys = [torch.tensor([], dtype=self.dtype) for _ in range(self.model._decoder.n_layer)]
+        self.cross_values = [torch.tensor([], dtype=self.dtype) for _ in range(self.model._decoder.n_layer)]
         if self._profile_decoder:
             print(self.profile.key_averages().table(sort_by='cpu_time_total', row_limit=50))
             torch._C._aio_profiler_print()
@@ -553,7 +554,7 @@ class DecodingTask:
         self.sot_index: int = self.initial_tokens.index(tokenizer.sot)
 
         # inference: implements the forward pass through the decoder, including kv caching
-        self.inference = PyTorchInference(model, len(self.initial_tokens))
+        self.inference = PyTorchInference(model, len(self.initial_tokens), options.fp16)
 
         # sequence ranker: implements how to rank a group of sampled sequences
         self.sequence_ranker = MaximumLikelihoodRanker(options.length_penalty)

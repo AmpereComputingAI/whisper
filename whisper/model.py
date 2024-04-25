@@ -137,8 +137,6 @@ class MultiHeadAttention(nn.Module):
         qk = q @ k
         if mask is not None:
             qk = qk + mask[:n_ctx, :n_ctx]
-        if qk.dtype != torch.float:
-            qk = qk.float()
 
         w = F.softmax(qk, dim=-1)
         if w.dtype != q.dtype:
